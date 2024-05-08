@@ -3,13 +3,13 @@
 # given the job params, url, username and user token.
 - name: Launch jenkins job
   hosts: all
-  tasks: 
-  # launch jenkins job using redhatci collection.
-  - name: Launch jenkins job
-    ansible.builtin.import_role: 
-      name: redhatci.ocp.jenkins_job_launcher 
-    vars:
-      jjl_job_params: "{{ job_params }}"
-      jjl_job_url: "{{ job_url }}"
-      jjl_username: "{{ username }}"
-      jjl_token: "{{ token }}"
+  tasks:
+    # launch jenkins job using redhatci collection.
+    - name: Launch jenkins job
+      ansible.builtin.import_role:
+        name: redhatci.ocp.jenkins_job_launcher
+      vars:
+        jjl_job_params: "{{ job_params }}"
+        jjl_job_url: "{{ job_url }}"
+        jjl_username: "{{ username }}"
+        jjl_token: "{{ token }}"
