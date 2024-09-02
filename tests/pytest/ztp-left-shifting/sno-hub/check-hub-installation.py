@@ -3,9 +3,9 @@ import time
 import requests
 import pytest
 
-kubeconfig=os.getenv("KUBECONFIG")
-ocp_hub_version=os.getenv("OCP_HUB_VERSION")
-mch_ns=os.getenv("MCH_NAMESPACE")
+kubeconfig = os.getenv("KUBECONFIG")
+ocp_hub_version = os.getenv("OCP_HUB_VERSION")
+mch_ns = os.getenv("MCH_NAMESPACE")
 
 @pytest.mark.parametrize("endpoint", [
     {"cmd": f"oc --kubeconfig {kubeconfig} whoami --show-console", "response": 200},
