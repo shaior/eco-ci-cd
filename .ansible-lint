@@ -1,3 +1,7 @@
 ---
 skip_list:
   - var-naming[no-role-prefix]
+
+# Define paths or files to ignore
+exclude_paths:
+  - "tests/dast"
