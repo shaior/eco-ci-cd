@@ -6,8 +6,12 @@ RUN dnf -y install \
     python3-pip \
     && dnf clean all
 
+# Upgrade pip3
+RUN pip3 install --upgrade pip
+
 # Install ansible and ansible-lint
 RUN pip3 install --no-cache-dir \
+    setuptools_rust \
     ansible \
     ansible-lint
 
