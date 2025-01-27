@@ -112,7 +112,15 @@
   changed_when: true
   notify: Remove working directory
 
+- name: Ensure destionation directory exists
+  become: true
+  ansible.builtin.file:
+    state: directory
+    path: "{{ kickstart_iso_file_desire_location }}"
+    mode: "0755"
+
 - name: Move iso file to required directory
+  become: true
   ansible.builtin.copy:
     src: "{{ kickstart_iso_dest_dir }}/{{ kickstart_iso_name }}"
     dest: "{{ kickstart_iso_file_desire_location }}/{{ kickstart_iso_name }}"

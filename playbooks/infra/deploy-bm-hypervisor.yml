@@ -103,6 +103,15 @@
     location: rdu
     system_iso_link: "{{ system_iso_rdu_link if location == 'rdu' else system_iso_tlv_link }}"
   tasks:
+
+      # Requirements of redhatci.ocp.setup_http_store role
+    - name: Ensure firewalld is running
+      become: true
+      ansible.builtin.service:
+        name: firewalld
+        enabled: true
+        state: started
+
     - name: Set ISO name
       ansible.builtin.set_fact:
         iso_name: installation.iso
@@ -186,7 +195,6 @@
         dns4:
           - "{{ (net_config | from_yaml)['dns'] }}"
 
-
     - name: Set up network connection bridge-slave
       community.general.nmcli:
         type: ethernet
@@ -209,33 +217,50 @@
     - name: Gather facts
       ansible.builtin.gather_facts:
 
-    - name: Configure secondary interface bridges
-      when: item.value.ifname in ansible_facts.interfaces
-      loop: "{{ seconday_networks | from_yaml | dict2items }}"
-      community.general.nmcli:
-        type: bridge
-        conn_name: "{{ item.key }}"
-        method4: manual
-        method6: disabled
-        state: present
-        stp: false
-        ifname: "{{ item.key }}"
-        autoconnect: true
-        ip4: "{{ item.value.ipv4 }}"
+    - name: Configure secondary interfaces if required
+      when: seconday_networks is defined
+      block:
 
-    - name: Configure vlan interfaces
-      when: item.value.ifname in ansible_facts.interfaces
-      loop: "{{ seconday_networks | from_yaml | dict2items }}"
-      community.general.nmcli:
-        type: vlan
-        conn_name: "vlan{{ item.value.vlan }}"
-        state: present
-        ifname: "vlan{{ item.value.vlan }}"
-        autoconnect: true
-        slave_type: bridge
-        vlanid: "{{ item.value.vlan }}"
-        master: "{{ item.key }}"
-        vlandev: "{{ item.value.ifname }}"
+        - name: Configure secondary interface bridges
+          when: item.value.ifname in ansible_facts.interfaces
+          loop: "{{ seconday_networks | from_yaml | dict2items }}"
+          community.general.nmcli:
+            type: bridge
+            conn_name: "{{ item.key }}"
+            method4: manual
+            method6: disabled
+            state: present
+            stp: false
+            ifname: "{{ item.key }}"
+            autoconnect: true
+            ip4: "{{ item.value.ipv4 }}"
+
+        - name: Set up network connection bridge-slave for secondary connection
+          when: item.value.vlan is not defined
+          loop: "{{ seconday_networks | from_yaml | dict2items }}"
+          community.general.nmcli:
+            type: ethernet
+            slave_type: bridge
+            ifname: "{{ item.value.ifname }}"
+            master: "{{ item.key }}"
+            method4: disabled
+            conn_name: "{{ item.value.ifname }}"
+            state: present
+            autoconnect: true
+
+        - name: Configure vlan interfaces for secondary connection
+          when: item.value.ifname in ansible_facts.interfaces and item.value.vlan is defined
+          loop: "{{ seconday_networks | from_yaml | dict2items }}"
+          community.general.nmcli:
+            type: vlan
+            conn_name: "vlan{{ item.value.vlan }}"
+            state: present
+            ifname: "vlan{{ item.value.vlan }}"
+            autoconnect: true
+            slave_type: bridge
+            vlanid: "{{ item.value.vlan }}"
+            master: "{{ item.key }}"
+            vlandev: "{{ item.value.ifname }}"
 
     - name: Install virtualization packages
       ansible.builtin.dnf:
