@@ -18,7 +18,7 @@ COPY . ./eco-ci-cd
 WORKDIR /eco-ci-cd
 
 # Install requirements
-RUN ansible-galaxy collection install -r requirements.yml
+RUN ansible-galaxy collection install -r requirements.yml -vv
 
 # Set entrypoint to bash
 ENTRYPOINT ["/bin/bash"]

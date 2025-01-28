@@ -1,4 +1,4 @@
 image_stream_tag:
-    name: telco-bastion
-    namespace: ci
-    tag: latest
+    name: release
+    namespace: openshift
+    tag: rhel-9-release-golang-1.23-openshift-4.19
