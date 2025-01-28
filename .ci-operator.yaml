@@ -1,0 +1,4 @@
+image_stream_tag:
+    name: telco-bastion
+    namespace: ci
+    tag: latest
