@@ -1,0 +1,259 @@
+## Disclaimer:
+# This playbook is not officially supported and comes with no guarantees.
+# Use it at your own risk. Ensure you test thoroughly in your environment
+# before deploying to production.
+
+# Ansible Playbook for Deploying VMs on Hypervisor and Setting Up Bastion Host
+
+## Overview:
+# This playbook automates the process of deploying virtual machines (VMs) on a hypervisor
+# and setting up the bastion host environment. It includes:
+# - Downloading and preparing VM disk images.
+# - Configuring network settings via cloud-init.
+# - Customizing VM images with SSH keys and root password.
+# - Installing necessary system RPMs and activating the operating system.
+# - Configuring SSH for passwordless access.
+
+## Prerequisites:
+# - Ansible 2.10+ installed on the control node.
+# - Ansible control node configured with necessary permissions.
+# - SSH Access to hypervisors hosts.
+# - VM qcow2 disk images and RPM links accessible via HTTP.
+
+## Roles Requirements
+# The playbook uses role:
+# - redhatci.ocp.create_vms: Creates VMs on given hypervisor.
+
+## Usage:
+# - Ensure all required variables are defined in the inventory or host_vars/group_vars.
+# - Execute the playbook using Ansible's command-line tool:
+#   ansible-playbook playbooks/infra/deploy-vm-bastion-libvirt.yml -i ./inventories/infra/deploy-bm-hypervisor.yml
+#
+
+## Variables Used by Playbook
+# Please note: For `kickstart_iso` variables, refer to the `kickstart_iso` README.
+# all:
+#   activate_system_cmd: active-bin             # Command to activate the system
+#   ansible_become_password: "become_password"  # Password for becoming root (BECOME PASSWORD)
+#   ansible_password: "pa$$word"                # SSH password for Ansible user
+#   ansible_ssh_private_key: 'ssh-key'          # Path to the private SSH key for authentication
+#   ansible_user: user                          # SSH username for remote access
+#   bmc_password: 'pa$$word'                    # Password for BMC (Baseboard Management Controller)
+#   bmc_user: 'user'                            # Username for BMC authentication
+#   ssh_public_key: 'public_ssh_key'            # Public SSH key for authentication after bare-metal installation
+#   system_rpm_link: http://example.rpm         # URL to the RPM package used for system activation
+
+# hypervisor:
+#   ansible_host: 10.1.1.1                      # IP address or hostname of the hypervisor
+
+# bastion:
+#   ansible_host: 10.1.1.1              # IP address or hostname of the hypervisor
+#   dns: 192.168.1.1                    # DNS server IP
+#   gateway: 10.1.1.254                 # Default gateway for the bastion
+#   hostname: bastion.example.com       # Hostname of the bastion
+#   net_prefix: "27"                    # Network prefix (CIDR notation)
+#   vm_bridge_name: example             # Hypervisor bridge name
+#   vm_name: bastion-vm-name            # VM name on the hypervisor
+
+# bastions:
+#   initial_user: username              # The initial user account to log into the bastion host
+#   vm_cpu: "8"                         # Number of virtual CPUs allocated to the VM
+#   vm_disk_size: 100G                  # Disk size allocated to the VM (in gigabytes)
+#   vm_external_interface: eno0         # External network interface for the VM
+#   vm_ram: "16384"                     # Amount of RAM allocated to the VM (in megabytes)
+
+# Roles/Tasks Overview:
+# 1. **Deploy VM on Hypervisor**
+#    - Download and resize VM QCOW2 images.
+#    - Apply network configurations via cloud-init.
+#    - Deploy VM using the customized image.
+#
+# 2. **Initial System Setup (Bastion Host)**
+#    - Install and activate the operating system.
+#    - Configure users, sudo access, and SSH settings.
+#
+# 3. **Setup Bastion Host**
+#    - Configure SSH keys for secure communication.
+#    - Set hostname and other critical system settings.
+#
+# Notes:
+# - This playbook assumes the hypervisor host is pre-installed and ready.
+# - Customize variables such as `vm_name`, `ansible_user`, and network settings to fit your environment.
+# - Test in a non-production environment before deploying.
+---
+- name: Deploy VM on hypervisor
+  hosts: hypervisor
+  vars:
+    location: rdu
+    vm_qcow_url: "{{ vm_qcow_rdu_url if location == 'rdu' else vm_qcow_tlv_url }}"
+    vm_name: "{{ hostvars['bastion'].vm_name }}"
+    vm_disk_name: "{{ vm_name }}_main.qcow2"
+    libvirtd_disk_path: /var/lib/libvirt/images
+    vm_net_config:
+      network:
+        version: 2
+        ethernets:
+          "{{ hostvars['bastion'].vm_external_interface }}":
+            match:
+              name: "{{ hostvars['bastion'].vm_external_interface }}"
+            addresses:
+              - "{{ hostvars['bastion'].ansible_host }}/{{ hostvars['bastion'].net_prefix }}"
+            gateway4: "{{ hostvars['bastion'].gateway }}"
+            nameservers:
+              addresses: ["{{ hostvars['bastion'].dns }}"]
+  tasks:
+
+    - name: Gather VM qcow image
+      ansible.builtin.get_url:
+        url: "{{ vm_qcow_url }}"
+        dest: "{{ libvirtd_disk_path }}/{{ vm_disk_name }}"
+        force: true
+        mode: '0640'
+
+    - name: Resize VM hard disk
+      ansible.builtin.command:
+        "qemu-img resize {{ libvirtd_disk_path }}/{{ vm_disk_name }} {{ hostvars['bastion'].vm_disk_size }}"
+      register: resize_output
+      changed_when: resize_output.rc == 0
+
+    - name: Copy network configuration to cloud-init file
+      ansible.builtin.copy:
+        content: "{{ vm_net_config }}"
+        dest: "/tmp/{{ vm_name }}-network.yaml"
+        mode: "0644"
+
+    - name: Customize qcow2 VM image
+      ansible.builtin.command:
+        "virt-customize -a {{ libvirtd_disk_path }}/{{ vm_disk_name }} --root-password password:{{ ansible_password }}
+         --ssh-inject root:string:\"{{ ssh_public_key }}\""
+      register: resize_output
+      changed_when: resize_output.rc == 0
+
+    - name: Create bastion VMs
+      ansible.builtin.import_role:
+        name: redhatci.ocp.create_vms
+      vars:
+        additional_virt_install_options: "--cloud-init network-config=/tmp/{{ vm_name }}-network.yaml --wait=0"
+        cluster_name: "dummy"
+        vm_bridge_name: default
+        images_dir: "{{ libvirtd_disk_path }}"
+        kvm_nodes:
+          - name: "{{ vm_name }}"
+            disks:
+              main: "1" # Value ignored because hdd created on the previous step.
+            memory: "{{ hostvars['bastion'].vm_ram }}"
+            network_interfaces:
+              "{{ {hostvars['bastion'].vm_bridge_name: ''} }}"
+            uuid: ""
+            vcpu: "{{ hostvars['bastion'].vm_cpu }}"
+
+- name: Initial system setup
+  hosts: bastion
+  gather_facts: false
+  vars:
+    ansible_user: "{{ initial_user }}"
+    system_rpm_path: "/tmp/{{ system_rpm_link | basename }}"
+  tasks:
+    - name: Wait 1200 seconds for target connection to become reachable/usable
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        sleep: 10
+        timeout: 1200
+
+    - name: Get system rpm from repository
+      ansible.builtin.get_url:
+        url: "{{ system_rpm_link }}"
+        dest: "{{ system_rpm_path }}"
+        force: false
+        mode: "0640"
+
+    - name: Install system rpm
+      ansible.builtin.dnf:
+        name: "{{ system_rpm_path }}"
+        state: present
+        disable_gpg_check: true
+
+    - name: Activate OS
+      ansible.builtin.command:
+        "{{ activate_system_cmd }}"
+      changed_when: false
+
+    - name: "Deploy user {{ hostvars[inventory_hostname].ansible_user }}"
+      ansible.builtin.user:
+        name: "{{ hostvars[inventory_hostname].ansible_user }}"
+        create_home: true
+        groups: wheel
+        password: "{{ hostvars[inventory_hostname].ansible_password | password_hash('sha512') }}"
+        state: present
+
+    - name: Set paswordless sudo
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers.d/{{ hostvars[inventory_hostname].ansible_user }}
+        line: "{{ hostvars[inventory_hostname].ansible_user }} ALL=(ALL) NOPASSWD: ALL"
+        mode: "0640"
+        create: true
+
+    - name: Remove cloud-init default sshd config
+      ansible.builtin.file:
+        path: "/etc/ssh/sshd_config.d/50-cloud-init.conf"
+        state: absent
+
+    - name: Restart SSH daemon
+      ansible.builtin.systemd:
+        name: sshd
+        state: restarted
+
+    - name: Run partprobe to update kernel partition table
+      ansible.builtin.command:
+        cmd: partprobe
+      changed_when: true
+
+- name: Setup bastion host
+  hosts: bastion
+  gather_facts: true
+  tasks:
+
+    - name: Set up authorized_keys
+      become: false
+      ansible.builtin.lineinfile:
+        path: /home/{{ ansible_user }}/.ssh/authorized_keys
+        create: true
+        line: "{{ ssh_public_key }}"
+        mode: "0600"
+
+    - name: Setup RSA key
+      become: false
+      ansible.builtin.copy:
+        content: "{{ ansible_ssh_private_key }}"
+        dest: /home/{{ ansible_user }}/.ssh/id_rsa
+        mode: "0600"
+
+    - name: Setup RSA public key
+      become: false
+      ansible.builtin.copy:
+        content: "{{ ssh_public_key }}"
+        dest: /home/{{ ansible_user }}/.ssh/id_rsa.pub
+        mode: "0600"
+
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: "{{ hostname }}"
+      become: true
+
+    - name: Ensure epel repo present
+      ansible.builtin.dnf:
+        name: "https://dl.fedoraproject.org/pub/epel/epel-release-latest-{{ ansible_distribution_major_version }}.noarch.rpm"
+        state: present
+        disable_gpg_check: true
+      become: true
+
+    - name: Install required packages
+      ansible.builtin.dnf:
+        name:
+          - openconnect
+          - git
+          - firewalld
+          - podman
+          - tmux
+        state: present
+      become: true
