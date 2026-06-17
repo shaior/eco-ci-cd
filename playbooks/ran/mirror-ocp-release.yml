@@ -132,3 +132,19 @@
       ansible.builtin.file:
         path: "{{ mirror_ocp_release_pull_secret_path }}"
         state: absent
+
+    - name: Create or update ClusterImageSet for mirrored OCP version
+      when:
+        - kubeconfig is defined
+        - kubeconfig | length > 0
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        kubeconfig: "{{ kubeconfig }}"
+        definition:
+          apiVersion: hive.openshift.io/v1
+          kind: ClusterImageSet
+          metadata:
+            name: "{{ ocp_version_facts_major }}.{{ ocp_version_facts_minor }}"
+          spec:
+            releaseImage: "{{ disconnected_registry_url }}:{{ disconnected_registry_port }}/{{ mirror_ocp_release_registry_path }}:{{ ocp_version_facts_parsed_release }}"

@@ -1,0 +1,76 @@
+---
+# Quick test for the ClusterImageSet post-task added to mirror-ocp-release.yml.
+# Simulates the variables that would be set after the mirror role completes
+# and verifies that the ClusterImageSet is created/updated idempotently.
+#
+# Usage (run from the bastion):
+#   ansible-playbook playbooks/ran/test-create-clusterimageset.yml \
+#     -i inventories/ocp-deployment/build-inventory.py \
+#     --extra-vars "kubeconfig=/home/telcov10n/project/generated/kni-qe-108/auth/kubeconfig \
+#                   release_version=4.18.44 \
+#                   registry_url=disconnected.registry.local \
+#                   registry_port=5000 \
+#                   registry_path=ocp4/openshift"
+
+- name: Test - ClusterImageSet creation post-task
+  hosts: bastion
+  gather_facts: false
+
+  vars:
+    _release_version: "{{ release_version | default('4.18.44') }}"
+    _registry_url: "{{ registry_url | default('disconnected.registry.local') }}"
+    _registry_port: "{{ registry_port | default('5000') }}"
+    _registry_path: "{{ registry_path | default('ocp4/openshift') }}"
+    _major: "{{ _release_version.split('.')[0] }}"
+    _minor: "{{ _release_version.split('.')[1] }}"
+    _release_image: "{{ _registry_url }}:{{ _registry_port }}/{{ _registry_path }}:{{ _release_version }}"
+
+  tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - kubeconfig is defined
+          - kubeconfig | length > 0
+        fail_msg: "kubeconfig must be provided via --extra-vars"
+
+    - name: Show ClusterImageSet that will be created
+      ansible.builtin.debug:
+        msg:
+          - "ClusterImageSet name : {{ _major }}.{{ _minor }}"
+          - "releaseImage         : {{ _release_image }}"
+          - "kubeconfig           : {{ kubeconfig }}"
+
+    - name: Create or update ClusterImageSet
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        kubeconfig: "{{ kubeconfig }}"
+        definition:
+          apiVersion: hive.openshift.io/v1
+          kind: ClusterImageSet
+          metadata:
+            name: "{{ _major }}.{{ _minor }}"
+          spec:
+            releaseImage: "{{ _release_image }}"
+
+    - name: Read back the ClusterImageSet to verify
+      kubernetes.core.k8s_info:
+        api_version: hive.openshift.io/v1
+        kind: ClusterImageSet
+        name: "{{ _major }}.{{ _minor }}"
+        kubeconfig: "{{ kubeconfig }}"
+      register: cis_result
+
+    - name: Assert ClusterImageSet exists with correct releaseImage
+      ansible.builtin.assert:
+        that:
+          - cis_result.resources | length == 1
+          - cis_result.resources[0].spec.releaseImage == _release_image
+        fail_msg: >-
+          releaseImage mismatch.
+          Got:      {{ cis_result.resources[0].spec.releaseImage | default('NOT FOUND') }}
+          Expected: {{ _release_image }}
+
+    - name: PASS - ClusterImageSet verified
+      ansible.builtin.debug:
+        msg: "ClusterImageSet '{{ _major }}.{{ _minor }}' = {{ cis_result.resources[0].spec.releaseImage }}"
